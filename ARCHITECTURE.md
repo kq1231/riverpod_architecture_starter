@@ -31,25 +31,107 @@ Presentation → Application → Domain ← Data
    - Example: `CounterProvider.increment()` → fetch → transform → save
    - Keeps widget stateless. Manages loading/error/data via AsyncValue.
 
-## Provider vs AsyncNotifierProvider
+## Riverpod Provider Taxonomy
 
-| | `Provider` (plain) | `AsyncNotifierProvider` |
-|---|---|---|
-| **Purpose** | Dependency injection (give me the class) | Fetch data + perform mutations + manage UI state |
-| **Has methods?** | No — just returns a class instance | Yes — increment(), save(), etc. |
-| **When to use** | Repositories, Services | Feature state that widgets watch |
+Riverpod has 6 provider types, organized by sync/async and read-only vs read-write:
 
-**When you need BOTH fetching AND mutations → use AsyncNotifierProvider.** It replaces the need for a separate FutureProvider + controller combo.
+### Synchronous (value is immediately available)
+
+| Provider | Purpose | Has methods? | Example |
+|----------|---------|:---:|---------|
+| `Provider` | Provide a value (DI) | No | `themeProvider`, `repoProvider` |
+| `NotifierProvider` | Mutable synchronous state with methods | Yes | `TabNotifier` with `selectTab()` |
+
+### Asynchronous (value resolves from a Future/Stream)
+
+| Provider | Purpose | Has methods? | Example |
+|----------|---------|:---:|---------|
+| `FutureProvider` | Provide async data (read-only after resolve) | No | `configProvider` from shared prefs |
+| `AsyncNotifierProvider` | Async state + methods (fetch + mutate) | Yes | `CounterProvider` with `increment()` |
+| `StreamProvider` | Provide a stream (read-only) | No | `authStateProvider` from FirebaseAuth |
+| `StreamNotifierProvider` | Stream state + methods (listen + mutate) | Yes | `ChatNotifier` with `sendMessage()` |
+
+**The rule:** If you only need to PROVIDE data → use the base version (Provider, FutureProvider, StreamProvider). If you also need to MUTATE or perform side effects → use the Notifier version (NotifierProvider, AsyncNotifierProvider, StreamNotifierProvider).
 
 ```dart
-// Single AsyncNotifier handles both fetching (build) and mutating
+// AsyncNotifierProvider — fetch (build) + mutate (methods)
 class CounterProvider extends AsyncNotifier<Counter> {
   @override
   Future<Counter> build() async => repo.fetchCounter(); // fetch
   Future<void> increment() async { ... }                 // mutate
 }
+
+// NotifierProvider — synchronous state + methods
+class TabNotifier extends Notifier<int> {
+  @override
+  int build() => 0;
+  void selectTab(int index) => state = index;
+}
+
+// StreamNotifierProvider — listen to stream + methods
+class ChatNotifier extends StreamNotifier<List<Message>> {
+  @override
+  Stream<List<Message>> build() => repo.watchMessages();
+  Future<void> sendMessage(String text) async { ... }
+}
 ```
 
+### Anti-Pattern: Splitting Provider + Controller
+
+**❌ WRONG — Never split a Notifier into a Provider + separate controller class:**
+
+```dart
+// DON'T DO THIS — this is the old Provider/BLoC pattern leaking into Riverpod
+final counterProvider = FutureProvider<Counter>((ref) => repo.fetchCounter());
+
+class CounterController {
+  CounterController(this.ref);
+  final Ref ref;
+  Future<void> increment() async { ... }  // methods live outside the provider
+}
+```
+
+**✅ CORRECT — Use a Notifier that combines state + methods:**
+
+```dart
+// DO THIS — state and methods live together in one provider
+class CounterProvider extends AsyncNotifier<Counter> {
+  @override
+  Future<Counter> build() async => repo.fetchCounter();
+  Future<void> increment() async { ... }  // methods are part of the provider
+}
+```
+
+**Why?** Riverpod's design puts state and mutations together. Splitting them breaks `ref.watch` (the controller can't auto-refresh), makes testing harder, and defeats the purpose of the Notifier pattern.
+
+### When to Use a Controller
+
+Controllers DO exist in Riverpod, but only for a specific case: **controlling UI without providing data**.
+
+Use a `Notifier` (without a value) when you need to:
+- Perform an async operation triggered by a button
+- Show loading/error state for that specific operation
+- NOT expose any data that other widgets watch
+
+```dart
+// Controller — no data provided, just UI state for an operation
+class SubmitOrderController extends Notifier<AsyncValue<void>> {
+  @override
+  AsyncValue<void> build() => const AsyncData(null);
+
+  Future<void> submit(Order order) async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() => repo.submitOrder(order));
+  }
+}
+
+final submitOrderControllerProvider =
+    NotifierProvider<SubmitOrderController, AsyncValue<void>>(
+  SubmitOrderController.new,
+);
+```
+
+The key difference: a Controller's state type is `AsyncValue<void>` — it tracks whether an operation is loading/succeeded/failed, but doesn't provide data that other widgets subscribe to.
 ## Key Classes
 
 | Term | Role | Layer |
@@ -113,6 +195,16 @@ dart run flutter_flavorizr -p assets:download,assets:extract,android:androidMani
 ```
 
 
+## Widget Types
+
+| Widget | Like | Use When |
+|--------|------|----------|
+| **ConsumerWidget** | StatelessWidget + ref | Default choice — most widgets |
+| **ConsumerStatefulWidget** | StatefulWidget + ref | Need providers AND local state (controllers) |
+| **Consumer** | Inline ref scope | Only a subtree should rebuild |
+
+**Prefer `ConsumerWidget`** for almost everything. Use `ConsumerStatefulWidget` only when you need local mutable state (TextEditingController, etc.). Use `Consumer` inside a larger widget when only a small part should rebuild on provider changes.
+
 ## Routing (AutoRoute)
 
 1. Annotate page with `@RoutePage()`
@@ -127,4 +219,6 @@ dart run flutter_flavorizr -p assets:download,assets:extract,android:androidMani
 - **Models are immutable** — mutations return new instances
 - **Repositories return domain models**, not raw JSON
 - **Services are optional** — only when coordinating multiple repos
+- **Never split a Notifier into Provider + Controller** — state and methods belong together
+- **Use Controllers only for UI operations without data** — state type is `AsyncValue<void>`
 - **Use `dart analyze`**, not `flutter analyze`
