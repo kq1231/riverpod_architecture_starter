@@ -1,0 +1,20 @@
+# Flutter Flavorizr configuration — generates native platform configs only.
+# We handle the Dart side ourselves (Flavor enum + FlavorConfig).
+#
+# Run with native-only processors:
+#   dart run flutter_flavorizr -p assets:download,assets:extract,android:androidManifest,android:flavorizrGradle,android:buildGradle,android:dummyAssets,ios:xcconfig,ios:buildTargets,ios:schema,ios:dummyAssets,ios:plist,ios:launchScreen,assets:clean
+flavors:
+  dev:
+    app:
+      name: "Riverpod Starter (Dev)"
+    android:
+      applicationId: "com.starter.riverpod_architecture_starter.dev"
+    ios:
+      bundleId: "com.starter.riverpodArchitectureStarter.dev"
+  prod:
+    app:
+      name: "Riverpod Starter"
+    android:
+      applicationId: "com.starter.riverpod_architecture_starter"
+    ios:
+      bundleId: "com.starter.riverpodArchitectureStarter"
